@@ -1,11 +1,11 @@
-// services/geminiService.ts - VERSÃO CORRIGIDA (conecta ao backend)
+// services/geminiService.ts - VERSÃO SIMPLIFICADA E ROBUSTA
 import { Persona } from '../types';
 
 // URL do seu backend - AJUSTE CONFORME SEU AMBIENTE:
 // Para desenvolvimento local (testes):
-// const BACKEND_URL = 'https://backend-otica-cdo.onrender.com';
+// const BACKEND_URL = 'http://localhost:3001';
 // Para produção (GitHub Pages) - SUBSTITUA pela URL real do seu backend hospedado:
-const BACKEND_URL = 'https://backend-otica-cdo.onrender.com'; // ← SUBSTITUA PELA SUA URL
+const BACKEND_URL = 'https://backend-otica-cdo.onrender.com'; // ← SUBSTITUA PELA SUA URL REAL
 
 export const sendMessageToGemini = async (message: string, persona: Persona): Promise<string> => {
   try {
@@ -21,27 +21,46 @@ export const sendMessageToGemini = async (message: string, persona: Persona): Pr
         mensagem: message,
         contexto: `Consultor: ${persona.name}. ${persona.systemPrompt}`,
         timestamp: new Date().toISOString()
-      })
+      }),
+      // Timeout opcional para não deixar a requisição pendente para sempre
+      signal: AbortSignal.timeout(15000) // 15 segundos
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`❌ Erro HTTP ${response.status}:`, errorText);
-      throw new Error(`Erro HTTP ${response.status}: ${errorText.substring(0, 100)}`);
+      // Tenta obter detalhes do erro do backend
+      let errorDetail = `Erro HTTP ${response.status}`;
+      try {
+        const errorData = await response.json();
+        errorDetail += `: ${errorData.error || JSON.stringify(errorData)}`;
+      } catch {
+        // Se não conseguir parsear como JSON, usa o texto
+        const errorText = await response.text();
+        errorDetail += `: ${errorText.substring(0, 100)}`;
+      }
+      
+      console.error(`❌ ${errorDetail}`);
+      throw new Error(errorDetail);
     }
 
     const data = await response.json();
     console.log('✅ Resposta do backend:', data.sucesso ? 'Sucesso' : 'Erro');
     
+    // O backend agora SEMPRE retorna 'sucesso: true' (com fallback se precisar)
+    // Mas mantemos a verificação por segurança
     if (data.sucesso) {
       return data.resposta;
     } else {
-      return `⚠️ ${data.error || 'Erro desconhecido do servidor'}`;
+      // Se por algum motivo 'sucesso' for false, ainda temos a resposta do fallback
+      return data.resposta || `⚠️ ${data.error || 'Erro no processamento'}`;
     }
   } catch (error: any) {
     console.error('��� Erro ao chamar backend:', error);
     
     // Mensagens amigáveis baseadas no tipo de erro
+    if (error.name === 'AbortError' || error.name === 'TimeoutError') {
+      return '⏰ A solicitação está demorando muito. O servidor pode estar sobrecarregado. Tente novamente.';
+    }
+    
     if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
       return '��� Não foi possível conectar ao servidor. Verifique:\n1. Se o backend está rodando\n2. Sua conexão com internet\n3. A URL do backend está correta';
     }
@@ -51,10 +70,27 @@ export const sendMessageToGemini = async (message: string, persona: Persona): Pr
     }
     
     if (error.message.includes('401') || error.message.includes('403')) {
-      return '��� Erro de autenticação. A chave da API pode estar incorreta ou expirada.';
+      return '��� Erro de autenticação.';
     }
     
-    return '��� Desculpe, ocorreu um erro técnico. Tente novamente em alguns instantes.';
+    if (error.message.includes('429')) {
+      return '��� O serviço está temporariamente limitado. O sistema usará respostas pré-definidas.';
+    }
+    
+    // Fallback local SIMPLES para emergências (caso o backend também esteja offline)
+    return `��� ORÇAMENTO ÓTICA CDO
+
+Olá! No momento nosso sistema automático está processando sua solicitação.
+
+��� Para um atendimento imediato:
+• WhatsApp: (11) 98765-4321
+• Telefone: (11) 3333-3333
+
+⏰ Horário: Segunda a Sexta, 9h às 18h
+
+��� Av. Paulista, 1000 - São Paulo
+
+*Tente novamente em alguns instantes ou entre em contato diretamente.*`;
   }
 };
 
@@ -76,14 +112,15 @@ export const testBackendConnection = async (): Promise<{ success: boolean; messa
   try {
     const response = await fetch(`${BACKEND_URL}/api/health`, {
       method: 'GET',
-      headers: { 'Accept': 'application/json' }
+      headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(5000) // 5 segundos para health check
     });
     
     if (response.ok) {
       const data = await response.json();
       return { 
         success: true, 
-        message: `✅ Backend conectado: ${data.service} (${data.status})` 
+        message: `✅ Backend conectado: ${data.service} (${data.status}) - Modo: ${data.modoOperacao || 'ativo'}` 
       };
     } else {
       return { 
@@ -91,10 +128,10 @@ export const testBackendConnection = async (): Promise<{ success: boolean; messa
         message: `❌ Backend respondeu com erro: ${response.status}` 
       };
     }
-  } catch (error) {
+  } catch (error: any) {
     return { 
       success: false, 
-      message: `❌ Não foi possível conectar ao backend em ${BACKEND_URL}. Verifique se está rodando.` 
+      message: `❌ Não foi possível conectar ao backend em ${BACKEND_URL}. ${error.message}` 
     };
   }
 };
