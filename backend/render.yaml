@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: backend-otica-cdo
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false  # Isso fará o Render pedir a chave na interface
+      - key: NODE_ENV
+        value: production

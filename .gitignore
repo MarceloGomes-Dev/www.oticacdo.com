@@ -21,3 +21,13 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+.env
+
+# Arquivos sensíveis - NUNCA no GitHub
+backend/.env
+.env.production
+.env.local
+.env.development
+*.env*
+secrets*.json
+credentials*.json
