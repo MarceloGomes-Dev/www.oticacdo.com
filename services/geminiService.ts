@@ -3,9 +3,9 @@ import { Persona } from '../types';
 
 // URL do seu backend - AJUSTE CONFORME SEU AMBIENTE:
 // Para desenvolvimento local (testes):
-// const BACKEND_URL = 'http://localhost:3001';
+// const BACKEND_URL = 'https://backend-otica-cdo.onrender.com';
 // Para produção (GitHub Pages) - SUBSTITUA pela URL real do seu backend hospedado:
-const BACKEND_URL = 'http://localhost:3001'; // ← SUBSTITUA PELA SUA URL
+const BACKEND_URL = 'https://backend-otica-cdo.onrender.com'; // ← SUBSTITUA PELA SUA URL
 
 export const sendMessageToGemini = async (message: string, persona: Persona): Promise<string> => {
   try {
