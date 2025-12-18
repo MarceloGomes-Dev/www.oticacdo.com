@@ -31,3 +31,4 @@ backend/.env
 *.env*
 secrets*.json
 credentials*.json
+dist/
