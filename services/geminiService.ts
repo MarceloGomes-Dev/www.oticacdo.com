@@ -1,36 +1,87 @@
 import { Persona } from './types';
 
-// ‚ö†Ô∏è SUBSTITUA PELA SUA NOVA URL DO RENDER
-const BACKEND_URL = 'https://backend-otica-cdo-oobw.onrender.com';
+const BACKEND_URL = 'http://localhost:3001'; // Ou seu Render
+
+// Sistema de hist√≥rico de conversa
+let conversaHistorico: Array<{role: string, content: string}> = [];
 
 export const sendMessageToGemini = async (message: string, persona: Persona): Promise<string> => {
-  console.log(`Ì¥ñ Enviando para: ${BACKEND_URL}`);
+  console.log(`Ì≤¨ [${persona.name}] Enviando: "${message.substring(0, 60)}..."`);
+  
+  // Adicionar mensagem do usu√°rio ao hist√≥rico
+  conversaHistorico.push({ role: 'user', content: message });
   
   try {
-    const response = await fetch(`${BACKEND_URL}/api/orcamento`, {
+    const response = await fetch(`${BACKEND_URL}/api/conversa`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
       body: JSON.stringify({ 
         mensagem: message,
-        persona: persona.name 
+        persona: persona.name,
+        contexto: persona.systemPrompt,
+        historico: conversaHistorico.slice(-5) // √öltimas 5 mensagens
       })
     });
 
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     
     const data = await response.json();
+    
+    // Adicionar resposta da IA ao hist√≥rico
+    if (data.sucesso && data.resposta) {
+      conversaHistorico.push({ role: 'assistant', content: data.resposta });
+      
+      // Manter hist√≥rico limitado (√∫ltimas 10 trocas)
+      if (conversaHistorico.length > 20) {
+        conversaHistorico = conversaHistorico.slice(-20);
+      }
+    }
+    
     return data.resposta || 'N√£o foi poss√≠vel gerar uma resposta.';
     
   } catch (error: any) {
-    console.error('Erro:', error.message);
+    console.error(`Ì¥• [${persona.name}] Erro:`, error.message);
     
-    return `Ì±ì **${persona.name}**
+    // Resposta de fallback com contexto
+    return `ÔøΩÔøΩ **${persona.name} - ${persona.role}**
     
-Ì≥û Contato direto:
+Com base na nossa conversa sobre "${conversaHistorico.slice(-2).map(h => h.content.substring(0, 30)).join('...')}", recomendo:
+
+Ì≥û **Para uma an√°lise personalizada:**
+Agende uma consulta gratuita!
 WhatsApp: (11) 99999-9999
-Telefone: (11) 3333-3333`;
+
+‚è∞ **Hor√°rio de atendimento:**
+Segunda a Sexta: 9h √†s 18h
+S√°bado: 9h √†s 13h
+
+*Estou aqui para ajudar com todas suas d√∫vidas √≥ticas!*`;
   }
 };
 
-export const getChatSession = () => ({});
-export const resetChat = () => console.log('Chat reiniciado');
+// Nova fun√ß√£o para conversa cont√≠nua
+export const getChatSession = () => ({ historico: conversaHistorico });
+
+export const resetChat = () => {
+  conversaHistorico = [];
+  console.log('Ì≤¨ Hist√≥rico reiniciado');
+};
+
+// Verificar status do sistema
+export const checkIAStatus = async () => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/saude`);
+    const data = await response.json();
+    
+    return {
+      status: data.status,
+      iaAtiva: data.apis_ativas?.deepseek || data.apis_ativas?.huggingface,
+      mensagem: data.apis_ativas?.deepseek ? '‚úÖ IA Profissional Ativa' : '‚ö†Ô∏è Modo Fallback (Configure API)'
+    };
+  } catch {
+    return { status: 'offline', iaAtiva: false, mensagem: 'Backend n√£o respondendo' };
+  }
+};

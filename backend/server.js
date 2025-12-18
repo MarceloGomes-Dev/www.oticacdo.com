@@ -1,450 +1,295 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { GoogleGenAI } from '@google/genai';
-import { FRAMES, LENSES, TREATMENTS, PERSONAS, PAYMENT_METHODS, DELIVERY_TIMES } from './data.js';
+import axios from 'axios';
 
 dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Cache simples em memória (evita repetir consultas similares)
-const responseCache = new Map();
-const CACHE_DURATION = 5 * 60 * 1000; // 5 minutos
-
-// Inicializa Gemini (se chave existir)
-let ai = null;
-if (process.env.GEMINI_API_KEY) {
-  try {
-    ai = new GoogleGenAI({ 
-      apiKey: process.env.GEMINI_API_KEY 
-    });
-    console.log('��� Gemini API inicializada');
-  } catch (error) {
-    console.warn('⚠️  Gemini API não pôde ser inicializada:', error.message);
-  }
-}
-
-// Middleware
 app.use(cors({
-  origin: [
-    'https://marcelogomes-dev.github.io',
-    'http://localhost:5173',
-    'http://localhost:3000'
-  ],
+  origin: ['https://marcelogomes-dev.github.io/www.oticacdo.com/', 'http://localhost:5173'],
   credentials: true
 }));
 app.use(express.json());
 
-// ========== SISTEMA DE FALLBACK RICO ==========
+// ========== CONFIGURAÇÕES DAS APIS ==========
+const APIS_CONFIG = {
+  deepseek: {
+    url: 'https://api.deepseek.com/v1/chat/completions',
+    apiKey: process.env.DEEPSEEK_API_KEY,
+    model: 'deepseek-chat',
+    active: !!process.env.DEEPSEEK_API_KEY
+  },
+  huggingface: {
+    url: 'https://api-inference.huggingface.co/models/meta-llama/Llama-3.2-3B-Instruct',
+    apiKey: process.env.HUGGINGFACE_API_KEY,
+    active: !!process.env.HUGGINGFACE_API_KEY
+  }
+};
 
-const generateRichFallback = (message, persona, useCase) => {
-  console.log(`�� Gerando fallback rico para: "${message.substring(0, 50)}..."`);
+// ========== SISTEMA DE IA HÍBRIDO ==========
+const queryDeepSeek = async (prompt) => {
+  if (!APIS_CONFIG.deepseek.active) return null;
   
-  const personaData = PERSONAS.find(p => p.name === persona) || PERSONAS[0];
-  
-  // Análise da mensagem do cliente
-  const isBudgetQuestion = message.toLowerCase().includes('quanto') || 
-                          message.toLowerCase().includes('preço') ||
-                          message.toLowerCase().includes('custo');
-  
-  const isStyleQuestion = message.toLowerCase().includes('estilo') ||
-                         message.toLowerCase().includes('moda') ||
-                         message.toLowerCase().includes('formato');
-  
-  const isTechnicalQuestion = message.toLowerCase().includes('lente') ||
-                             message.toLowerCase().includes('grau') ||
-                             message.toLowerCase().includes('tratamento');
-  
-  // Seleciona frames baseado na consulta
-  let recommendedFrames = FRAMES;
-  if (isStyleQuestion) {
-    recommendedFrames = FRAMES.filter(f => f.shape === 'Gatinho' || f.shape === 'Aviador');
-  } else if (isTechnicalQuestion) {
-    recommendedFrames = FRAMES.filter(f => f.usage === 'Receituário');
-  }
-  
-  // Seleciona lentes baseado na consulta
-  let recommendedLenses = LENSES;
-  if (message.toLowerCase().includes('multifocal') || message.toLowerCase().includes('progressiva')) {
-    recommendedLenses = LENSES.filter(l => l.type.includes('Multifocal'));
-  } else if (message.toLowerCase().includes('fotossensível') || message.toLowerCase().includes('escurece')) {
-    recommendedLenses = LENSES.filter(l => l.type.includes('Fotossensível'));
-  }
-  
-  // Gera orçamento detalhado
-  const sampleFrame = recommendedFrames[Math.floor(Math.random() * recommendedFrames.length)];
-  const sampleLens = recommendedLenses[Math.floor(Math.random() * recommendedLenses.length)];
-  const sampleTreatment = TREATMENTS[Math.floor(Math.random() * TREATMENTS.length)];
-  
-  const totalPrice = sampleFrame.price + sampleLens.price + sampleTreatment.price;
-  
-  // Resposta personalizada baseada na persona
-  let response = '';
-  
-  if (personaData.role.includes('Optometrista')) {
-    response = `��� **${personaData.name} - ${personaData.role}**
+  try {
+    const response = await axios.post(
+      APIS_CONFIG.deepseek.url,
+      {
+        model: APIS_CONFIG.deepseek.model,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 1000,
+        temperature: 0.7
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${APIS_CONFIG.deepseek.apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      }
+    );
     
-Baseado na sua solicitação: "${message}"
+    return response.data.choices[0].message.content;
+  } catch (error) {
+    console.warn('❌ DeepSeek falhou:', error.message);
+    return null;
+  }
+};
 
-��� **ANÁLISE TÉCNICA:**
-• Tipo de lente recomendada: ${sampleLens.type} (${sampleLens.material})
-• Tratamento essencial: ${sampleTreatment.name} - ${sampleTreatment.description}
-• Compatibilidade com graus altos: ${sampleFrame.description.includes('graus altos') ? 'Sim ✅' : 'Verificar'}
-
-��� **ORÇAMENTO DETALHADO:**
-1. Armação ${sampleFrame.name}: R$ ${sampleFrame.price.toFixed(2)}
-2. Lente ${sampleLens.type}: R$ ${sampleLens.price.toFixed(2)}
-3. Tratamento ${sampleTreatment.name}: R$ ${sampleTreatment.price.toFixed(2)}
-   ─────────────────────────────
-   **TOTAL: R$ ${totalPrice.toFixed(2)}**
-
-⏰ **PRAZO:** ${DELIVERY_TIMES[1].time}
-�� **CONDIÇÕES:** ${PAYMENT_METHODS[0].method} com ${PAYMENT_METHODS[0].discount} off
-
-��� **RECOMENDAÇÃO TÉCNICA:**
-${sampleLens.description}. ${sampleTreatment.description}
-
-��� **Próximo passo:** Agende uma consulta para medições precisas.`;
+const queryHuggingFace = async (prompt) => {
+  if (!APIS_CONFIG.huggingface.active) return null;
   
-  } else if (personaData.role.includes('Visagismo')) {
-    response = `��� **${personaData.name} - ${personaData.role}**
+  try {
+    const response = await axios.post(
+      APIS_CONFIG.huggingface.url,
+      { inputs: prompt },
+      {
+        headers: {
+          'Authorization': `Bearer ${APIS_CONFIG.huggingface.apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 15000
+      }
+    );
     
-Analisando sua busca: "${message}"
-
-✨ **ANÁLISE DE ESTILO:**
-• Formato sugerido: ${sampleFrame.shape}
-• Cor que realça: ${sampleFrame.frameColor}
-• Material ideal: ${sampleFrame.material}
-
-��� **SUGESTÕES DE ARMAÇÃO:**
-1. **${sampleFrame.name}** - ${sampleFrame.description}
-   → Cor: ${sampleFrame.frameColor} | Peso: ${sampleFrame.weight}
-   → Preço: R$ ${sampleFrame.price.toFixed(2)}
-
-2. **${FRAMES[1].name}** - ${FRAMES[1].description}
-   → Cor: ${FRAMES[1].frameColor} | Estilo: ${FRAMES[1].shape}
-   → Preço: R$ ${FRAMES[1].price.toFixed(2)}
-
-��� **DICAS DE VISAGISMO:**
-• Armação ${sampleFrame.shape} harmoniza com vários formatos de rosto
-• Cor ${sampleFrame.frameColor} é versátil para uso diário
-• ${sampleFrame.material} oferece durabilidade e conforto
-
-��� **INVESTIMENTO:**
-Armação + lente básica: a partir de R$ ${(sampleFrame.price + LENSES[0].price).toFixed(2)}
-
-��� **Agende uma consulta de visagismo para análise personalizada!**`;
-  
-  } else {
-    // Consultora Comercial
-    response = `��� **${personaData.name} - ${personaData.role}**
-    
-Entendi sua necessidade: "${message}"
-
-��� **MELHOR CUSTO-BENEFÍCIO:**
-
-���️ **OPÇÃO ECONÔMICA:**
-• Armação: ${FRAMES[0].name} - R$ ${FRAMES[0].price.toFixed(2)}
-• Lente: ${LENSES[0].type} - R$ ${LENSES[0].price.toFixed(2)}
-• **Total: R$ ${(FRAMES[0].price + LENSES[0].price).toFixed(2)}**
-
-⭐ **OPÇÃO PREMIUM:**
-• Armação: ${sampleFrame.name} - R$ ${sampleFrame.price.toFixed(2)}
-• Lente: ${sampleLens.type} - R$ ${sampleLens.price.toFixed(2)}
-• Tratamento: ${sampleTreatment.name} - R$ ${sampleTreatment.price.toFixed(2)}
-• **Total: R$ ${totalPrice.toFixed(2)}**
-
-��� **PROMOÇÕES ATIVAIS:**
-• Combo completo: 15% de desconto
-• 2ª unidade: 30% off (óculos de sol)
-• PIX: 10% adicional
-
-⏰ **PRAZOS:**
-${DELIVERY_TIMES.map(d => `• ${d.type}: ${d.time}`).join('\n')}
-
-��� **FORMA DE PAGAMENTO:**
-${PAYMENT_METHODS.map(p => `• ${p.method}${p.discount ? ` (${p.discount})` : ''}${p.installments ? ` ${p.installments}` : ''}`).join('\n')}
-
-��� **Fale comigo para negociar condições especiais!**`;
-  }
-  
-  return response;
-};
-
-// ========== SISTEMA DE CACHE ==========
-
-const getCacheKey = (message, persona) => {
-  const normalizedMessage = message.toLowerCase().trim();
-  const key = `${persona}:${normalizedMessage.substring(0, 100)}`;
-  return key;
-};
-
-const checkCache = (key) => {
-  const cached = responseCache.get(key);
-  if (cached && (Date.now() - cached.timestamp < CACHE_DURATION)) {
-    console.log('��� Resposta recuperada do cache');
-    return cached.response;
-  }
-  return null;
-};
-
-const saveToCache = (key, response) => {
-  responseCache.set(key, {
-    response,
-    timestamp: Date.now()
-  });
-  // Limitar tamanho do cache
-  if (responseCache.size > 100) {
-    const firstKey = responseCache.keys().next().value;
-    responseCache.delete(firstKey);
+    return response.data[0]?.generated_text || response.data;
+  } catch (error) {
+    console.warn('❌ Hugging Face falhou:', error.message);
+    return null;
   }
 };
 
-// ========== ROTAS PRINCIPAIS ==========
+// ========== SISTEMA DE CONVERSAÇÃO PROFISSIONAL ==========
+const criarPromptProfissional = (mensagem, persona, contexto) => {
+  return `Você é ${persona}, consultor da Ótica CDO - Cia dos Óculos.
 
-app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'online',
-    service: 'Ótica CDO - IA Avançada',
-    timestamp: new Date().toISOString(),
-    features: {
-      gemini: !!ai,
-      cache: responseCache.size,
-      fallback: 'rich',
-      personas: PERSONAS.length,
-      products: FRAMES.length + LENSES.length
-    },
-    stats: {
-      cacheSize: responseCache.size,
-      cacheHits: Object.fromEntries(
-        Array.from(responseCache.entries()).slice(0, 3)
-      )
-    }
-  });
-});
+CONTEXTO DA CONVERSA:
+${contexto}
 
-app.post('/api/orcamento', async (req, res) => {
-  const startTime = Date.now();
-  const { mensagem, contexto, persona = 'Dra. Camila' } = req.body;
+PERGUNTA DO CLIENTE:
+"${mensagem}"
+
+INSTRUÇÕES PARA RESPOSTA PROFISSIONAL:
+1. SEJA EMPÁTICO - mostre que entende a necessidade
+2. SEJA TÉCNICO - explique conceitos de forma clara
+3. SEJA COMERCIAL - sugira produtos quando apropriado
+4. SEJA NATURAL - fale como humano, não como robô
+5. SEJA DIRETO - vá ao ponto, mas com educação
+6. USE FORMATO - tópicos curtos, parágrafos claros
+
+EXEMPLO DE RESPOSTA IDEAL:
+"Entendo perfeitamente sua necessidade! Como especialista em óculos para [contexto], recomendo...
+
+1️⃣ PRIMEIRA OPÇÃO: [Explicação técnica simples]
+   • Vantagem: [benefício claro]
+   • Investimento: R$ [valor]
+
+2️⃣ SEGUNDA OPÇÃO: [Alternativa mais econômica]
+   • Vantagem: [outro benefício]
+   • Investimento: R$ [valor]
+
+��� Próximo passo: [call-to-action específico]"
+
+AGORA, RESPONDA COMO ${persona}:`;
+};
+
+// ========== ROTA PRINCIPAL ==========
+app.post('/api/conversa', async (req, res) => {
+  const { mensagem, persona = 'Dra. Camila', contexto = '', historico = [] } = req.body;
   
   if (!mensagem) {
-    return res.status(400).json({ 
-      sucesso: false,
-      error: 'Mensagem é obrigatória' 
-    });
+    return res.status(400).json({ sucesso: false, error: 'Mensagem é obrigatória' });
   }
   
-  console.log(`��� [${persona}] Consulta: "${mensagem.substring(0, 80)}..."`);
+  console.log(`��� [${persona}] Cliente: "${mensagem.substring(0, 80)}..."`);
   
-  // Verificar cache
-  const cacheKey = getCacheKey(mensagem, persona);
-  const cachedResponse = checkCache(cacheKey);
+  // Construir contexto da conversa
+  const contextoCompleto = historico.length > 0 
+    ? `Histórico recente:\n${historico.slice(-3).map(h => `${h.role}: ${h.content}`).join('\n')}\n\n${contexto}`
+    : contexto;
   
-  if (cachedResponse) {
-    return res.json({
-      sucesso: true,
-      resposta: cachedResponse,
-      metadata: {
-        fonte: 'cache',
-        tempo: `${Date.now() - startTime}ms`,
-        persona,
-        cacheHit: true
-      }
-    });
+  const prompt = criarPromptProfissional(mensagem, persona, contextoCompleto);
+  
+  // TENTAR APIS NA ORDEM
+  let resposta = null;
+  let fonte = 'fallback';
+  
+  // 1. Tentar DeepSeek
+  if (APIS_CONFIG.deepseek.active) {
+    resposta = await queryDeepSeek(prompt);
+    if (resposta) fonte = 'deepseek';
   }
   
-  // Tentar Gemini se disponível
-  if (ai) {
-    try {
-      console.log('��� Tentando Gemini API...');
-      
-      const prompt = `Você é ${persona}, ${PERSONAS.find(p => p.name === persona)?.role || 'consultora'} da Ótica CDO.
-
-CONTEXTO: ${contexto || 'Cliente solicitando orçamento'}
-
-PERGUNTA DO CLIENTE: "${mensagem}"
-
-BASE DE DADOS DA ÓTICA CDO:
-- Armações disponíveis: ${FRAMES.map(f => `${f.name} (R$ ${f.price})`).join(', ')}
-- Lentes: ${LENSES.map(l => `${l.type} por R$ ${l.price}`).join(', ')}
-- Tratamentos: ${TREATMENTS.map(t => `${t.name} +R$ ${t.price}`).join(', ')}
-- Formas de pagamento: ${PAYMENT_METHODS.map(p => p.method).join(', ')}
-- Prazos: ${DELIVERY_TIMES.map(d => `${d.type}: ${d.time}`).join(', ')}
-
-INSTRUÇÕES:
-1. Responda como ${persona} - use tom profissional mas acolhedor
-2. Forneça orçamento REALISTA baseado nos preços acima
-3. Inclua pelo menos 2 opções (econômica e premium)
-4. Seja específico com valores, prazos e condições
-5. Encerre com um call-to-action apropriado
-
-RESPONDA EM PORTUGUÊS BRASILEIRO:`;
-      
-      const response = await ai.models.generateContent({
-        model: 'gemini-1.5-flash',
-        contents: [{ 
-          role: 'user', 
-          parts: [{ text: prompt }] 
-        }],
-        generationConfig: {
-          temperature: 0.7,
-          maxOutputTokens: 1500,
-        }
-      });
-      
-      const respostaGemini = response.text;
-      console.log('✅ Gemini respondeu com sucesso');
-      
-      // Salvar no cache
-      saveToCache(cacheKey, respostaGemini);
-      
-      return res.json({
-        sucesso: true,
-        resposta: respostaGemini,
-        metadata: {
-          fonte: 'gemini_ai',
-          tempo: `${Date.now() - startTime}ms`,
-          modelo: 'gemini-1.5-flash',
-          persona,
-          cacheSaved: true
-        }
-      });
-      
-    } catch (error) {
-      console.warn('❌ Gemini falhou:', error.message);
-      
-      // Se erro for 429 (quota) ou 403 (access), usar fallback rico
-      if (error.message.includes('429') || error.message.includes('quota') || 
-          error.message.includes('403') || error.message.includes('billing')) {
-        console.log('��� Usando fallback rico (quota excedida)');
-      } else {
-        console.log('⚠️  Erro na Gemini, usando fallback rico');
-      }
-    }
+  // 2. Tentar Hugging Face
+  if (!resposta && APIS_CONFIG.huggingface.active) {
+    resposta = await queryHuggingFace(prompt);
+    if (resposta) fonte = 'huggingface';
   }
   
-  // Usar fallback rico
-  const fallbackResponse = generateRichFallback(mensagem, persona, 'default');
+  // 3. Fallback rico
+  if (!resposta) {
+    resposta = criarRespostaFallback(mensagem, persona);
+    fonte = 'fallback_rico';
+  }
   
-  // Salvar fallback no cache também
-  saveToCache(cacheKey, fallbackResponse);
+  // Limpar e formatar resposta
+  const respostaLimpa = resposta
+    .replace(/\n\s*\n\s*\n/g, '\n\n')  // Remover múltiplas quebras
+    .trim();
   
   res.json({
     sucesso: true,
-    resposta: fallbackResponse,
+    resposta: respostaLimpa,
     metadata: {
-      fonte: 'fallback_rico',
-      tempo: `${Date.now() - startTime}ms`,
+      fonte,
       persona,
-      cacheSaved: true,
-      observacao: ai ? 'Gemini indisponível' : 'Modo apenas fallback'
+      tokens: respostaLimpa.length,
+      timestamp: new Date().toISOString()
     }
   });
 });
+
+// ========== RESPOSTAS DE FALLBACK RICAS ==========
+const criarRespostaFallback = (mensagem, persona) => {
+  const respostas = {
+    'Dra. Camila': `���‍⚕️ **Dra. Camila - Optometrista Técnica**
+    
+Entendo sua preocupação com "${mensagem.substring(0, 50)}...". 
+
+��� **Minha análise técnica:**
+
+Para seu caso específico, recomendo uma avaliação em três aspectos:
+
+1. **CONFORTO VISUAL**
+   • Lentes com tratamento anti-reflexo obrigatório
+   • Material: Resina index 1.61 (equilíbrio perfeito)
+   • Proteção UV 100% incluso
+
+2. **SAÚDE OCULAR**
+   • Intervalos de 20-20-20 (a cada 20 minutos, 20 segundos olhando a 20 pés)
+   • Iluminação adequada no ambiente
+   • Umidade ocular preservada
+
+3. **INVESTIMENTO INTELIGENTE**
+   • Opção básica: R$ 429,90 (lente + armação)
+   • Opção premium: R$ 689,90 (com blue light e antirreflexo)
+
+��� **Próximo passo ideal:** Agende um exame de acuidade visual gratuito em nossa loja. Traga receitas antigas se tiver.`,
+
+    'Eduardo': `��� **Eduardo - Especialista em Visagismo**
+    
+Analisando seu interesse por "${mensagem.substring(0, 50)}...":
+
+✨ **PARA SUA AUTOESTIMA:**
+
+• **FORMATO IDEAL:** Baseado no formato do seu rosto (preciso vê-lo pessoalmente)
+• **COR QUE REALÇA:** Cores quentes para pele morena, frias para pele clara
+• **MATERIAL ELEGANTE:** Acetato italiano para conforto e durabilidade
+
+��� **SUGESTÕES IMEDIATAS:**
+
+1. **Para rosto redondo/oval:** Armação angular (quadrada/retangular)
+2. **Para rosto quadrado:** Armação redonda/oval
+3. **Para todos:** Cor tartaruga (clássica e atemporal)
+
+��� **DICA EXCLUSIVA:** Óculos não são só correção visual - são acessório de moda! Nesta temporada, as armações finas em metal estão em alta.
+
+��� **Experimente sem compromisso em nossa loja!**`,
+
+    'Mariana': `��� **Mariana - Consultora Comercial**
+    
+Perfeito! Vamos analisar "${mensagem.substring(0, 50)}...":
+
+��� **MELHOR CUSTO-BENEFÍCIO HOJE:**
+
+��� **PROMOÇÃO RELÂMPAGO (válida por 48h):**
+• Combo completo: Armação + lente 1.61 + antirreflexo
+• De: R$ 789,90 → Por: R$ 589,90
+• Forma de pagamento: 10x R$ 58,99
+
+��� **COMPARATIVO DIRETO:**
+1. **Econômico:** R$ 329,90 (básico, funcional)
+2. **Intermediário:** R$ 489,90 (recomendado, melhor custo)
+3. **Premium:** R$ 789,90 (top de linha, todos tratamentos)
+
+⏰ **PRAZOS REALISTAS:**
+• Pronta entrega: 2-3 dias úteis
+• Personalizada: 7-10 dias úteis
+• Emergência: 24h (acréscimo 30%)
+
+��� **CONDIÇÕES FLEXÍVEIS:** Garantia de 1 ano, troca em 30 dias.`
+  };
+  
+  return respostas[persona] || respostas['Mariana'];
+};
 
 // ========== ROTAS ADICIONAIS ==========
-
-app.get('/api/produtos', (req, res) => {
+app.get('/api/saude', (req, res) => {
   res.json({
-    armações: FRAMES,
-    lentes: LENSES,
-    tratamentos: TREATMENTS,
-    totalProdutos: FRAMES.length + LENSES.length + TREATMENTS.length
+    status: 'online',
+    sistema: 'Ótica CDO - IA Conversacional',
+    apis_ativas: {
+      deepseek: APIS_CONFIG.deepseek.active,
+      huggingface: APIS_CONFIG.huggingface.active
+    },
+    timestamp: new Date().toISOString()
   });
 });
 
-app.get('/api/personas', (req, res) => {
-  res.json(PERSONAS);
-});
-
-app.get('/api/cache/status', (req, res) => {
+app.post('/api/teste-ia', async (req, res) => {
+  const teste = await queryDeepSeek('Responda apenas "SISTEMA OPERACIONAL"');
+  
   res.json({
-    size: responseCache.size,
-    keys: Array.from(responseCache.keys()).slice(0, 10),
-    maxSize: 100,
-    duration: '5 minutos'
+    deepseek: teste ? 'OPERACIONAL' : 'INDISPONIVEL',
+    recomendacao: teste ? '✅ Sistema pronto para uso' : '⚠️ Configure chave DeepSeek',
+    link_configuracao: 'https://platform.deepseek.com/api_keys'
   });
-});
-
-app.post('/api/cache/clear', (req, res) => {
-  const previousSize = responseCache.size;
-  responseCache.clear();
-  res.json({
-    sucesso: true,
-    mensagem: `Cache limpo (${previousSize} entradas removidas)`
-  });
-});
-
-app.post('/api/teste-completo', async (req, res) => {
-  try {
-    const testCases = [
-      { mensagem: 'Preciso de um óculos para miopia, com lente fina', persona: 'Dra. Camila' },
-      { mensagem: 'Quero um óculos de sol estiloso', persona: 'Eduardo' },
-      { mensagem: 'Qual o melhor custo-benefício para óculos de grau?', persona: 'Mariana' }
-    ];
-    
-    const results = [];
-    
-    for (const testCase of testCases) {
-      const start = Date.now();
-      const cacheKey = getCacheKey(testCase.mensagem, testCase.persona);
-      const cached = checkCache(cacheKey);
-      
-      results.push({
-        caso: testCase.mensagem.substring(0, 40) + '...',
-        persona: testCase.persona,
-        cache: cached ? 'HIT' : 'MISS',
-        gemini: ai ? 'DISPONÍVEL' : 'INDISPONÍVEL'
-      });
-    }
-    
-    res.json({
-      status: 'sistema_operacional',
-      testes: results,
-      cacheSize: responseCache.size,
-      gemini: !!ai,
-      timestamp: new Date().toISOString()
-    });
-    
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
 });
 
 // ========== INICIALIZAÇÃO ==========
-
 app.listen(PORT, () => {
   console.log(`
-  �� ÓTICA CDO - IA AVANÇADA
-  ==========================
+  ��� SISTEMA IA CONVERSACIONAL - ÓTICA CDO
+  ========================================
   ��� Porta: ${PORT}
-  ��� Gemini: ${ai ? '✅ CONECTADA' : '⚠️  SEM CHAVE'}
-  ��� Cache: Pronto (0 entradas)
-  ��� Personas: ${PERSONAS.length} configuradas
-  ��� Produtos: ${FRAMES.length} armações, ${LENSES.length} lentes
+  ��� DeepSeek: ${APIS_CONFIG.deepseek.active ? '✅ CONFIGURADO' : '⚠️  NÃO CONFIGURADO'}
+  ��� Hugging Face: ${APIS_CONFIG.huggingface.active ? '✅ CONFIGURADO' : '⚠️  NÃO CONFIGURADO'}
+  ��� Personas: Dra. Camila, Eduardo, Mariana
   
   ��� Endpoints:
-  • Health: http://localhost:${PORT}/api/health
-  • Produtos: http://localhost:${PORT}/api/produtos
-  • Personas: http://localhost:${PORT}/api/personas
-  • Cache: http://localhost:${PORT}/api/cache/status
+  • Conversa: POST http://localhost:${PORT}/api/conversa
+  • Saúde: GET http://localhost:${PORT}/api/saude
+  • Teste: POST http://localhost:${PORT}/api/teste-ia
   
-  ⚡ Sistema: ${ai ? 'Gemini + Fallback' : 'Apenas Fallback'}
+  ⚡ Modo: ${APIS_CONFIG.deepseek.active ? 'IA REAL' : 'FALLBACK RICO'}
   `);
   
-  // Pré-cache de perguntas frequentes
-  const frequentQuestions = [
-    { q: 'Quanto custa um óculos completo?', p: 'Mariana' },
-    { q: 'Preciso de lente para astigmatismo', p: 'Dra. Camila' },
-    { q: 'Qual armação combina com meu rosto?', p: 'Eduardo' }
-  ];
-  
-  frequentQuestions.forEach(({ q, p }) => {
-    const key = getCacheKey(q, p);
-    const response = generateRichFallback(q, p, 'precache');
-    saveToCache(key, response);
-  });
-  
-  console.log(`✅ ${frequentQuestions.length} perguntas frequentes pré-cacheadas`);
+  if (!APIS_CONFIG.deepseek.active) {
+    console.log('\n⚠️  CONFIGURE UMA IA GRATUITA:');
+    console.log('1. Acesse: https://platform.deepseek.com/api_keys');
+    console.log('2. Crie uma API Key gratuita');
+    console.log('3. Adicione no .env: DEEPSEEK_API_KEY=sua_chave');
+    console.log('4. Reinicie o servidor');
+  }
 });
