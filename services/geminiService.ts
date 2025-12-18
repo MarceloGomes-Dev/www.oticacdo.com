@@ -1,7 +1,7 @@
 import { Persona } from './types';
 
-// ‚ö†Ô∏è NOVA URL DO RENDER (substitua pela sua real)
-const BACKEND_URL = 'https://backend-otica-cdo-marcelo.onrender.com';
+// ‚ö†Ô∏è SUBSTITUA PELA SUA NOVA URL DO RENDER
+const BACKEND_URL = 'https://backend-otica-cdo-oobw.onrender.com';
 
 export const sendMessageToGemini = async (message: string, persona: Persona): Promise<string> => {
   console.log(`Ì¥ñ Enviando para: ${BACKEND_URL}`);
