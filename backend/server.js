@@ -2,11 +2,30 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
+import { FRAMES, LENSES, TREATMENTS, PERSONAS, PAYMENT_METHODS, DELIVERY_TIMES } from './data.js';
 
 dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Cache simples em memória (evita repetir consultas similares)
+const responseCache = new Map();
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutos
+
+// Inicializa Gemini (se chave existir)
+let ai = null;
+if (process.env.GEMINI_API_KEY) {
+  try {
+    ai = new GoogleGenAI({ 
+      apiKey: process.env.GEMINI_API_KEY 
+    });
+    console.log('��� Gemini API inicializada');
+  } catch (error) {
+    console.warn('⚠️  Gemini API não pôde ser inicializada:', error.message);
+  }
+}
+
+// Middleware
 app.use(cors({
   origin: [
     'https://marcelogomes-dev.github.io',
@@ -17,371 +36,415 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Inicializa Gemini (se chave existir)
-const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ 
-  apiKey: process.env.GEMINI_API_KEY 
-}) : null;
+// ========== SISTEMA DE FALLBACK RICO ==========
 
-// Resposta de fallback para quando Gemini falha
-const gerarOrcamentoFallback = (mensagem) => {
-  return `��� ORÇAMENTO ÓTICA CDO (Resposta Automática)
+const generateRichFallback = (message, persona, useCase) => {
+  console.log(`�� Gerando fallback rico para: "${message.substring(0, 50)}..."`);
+  
+  const personaData = PERSONAS.find(p => p.name === persona) || PERSONAS[0];
+  
+  // Análise da mensagem do cliente
+  const isBudgetQuestion = message.toLowerCase().includes('quanto') || 
+                          message.toLowerCase().includes('preço') ||
+                          message.toLowerCase().includes('custo');
+  
+  const isStyleQuestion = message.toLowerCase().includes('estilo') ||
+                         message.toLowerCase().includes('moda') ||
+                         message.toLowerCase().includes('formato');
+  
+  const isTechnicalQuestion = message.toLowerCase().includes('lente') ||
+                             message.toLowerCase().includes('grau') ||
+                             message.toLowerCase().includes('tratamento');
+  
+  // Seleciona frames baseado na consulta
+  let recommendedFrames = FRAMES;
+  if (isStyleQuestion) {
+    recommendedFrames = FRAMES.filter(f => f.shape === 'Gatinho' || f.shape === 'Aviador');
+  } else if (isTechnicalQuestion) {
+    recommendedFrames = FRAMES.filter(f => f.usage === 'Receituário');
+  }
+  
+  // Seleciona lentes baseado na consulta
+  let recommendedLenses = LENSES;
+  if (message.toLowerCase().includes('multifocal') || message.toLowerCase().includes('progressiva')) {
+    recommendedLenses = LENSES.filter(l => l.type.includes('Multifocal'));
+  } else if (message.toLowerCase().includes('fotossensível') || message.toLowerCase().includes('escurece')) {
+    recommendedLenses = LENSES.filter(l => l.type.includes('Fotossensível'));
+  }
+  
+  // Gera orçamento detalhado
+  const sampleFrame = recommendedFrames[Math.floor(Math.random() * recommendedFrames.length)];
+  const sampleLens = recommendedLenses[Math.floor(Math.random() * recommendedLenses.length)];
+  const sampleTreatment = TREATMENTS[Math.floor(Math.random() * TREATMENTS.length)];
+  
+  const totalPrice = sampleFrame.price + sampleLens.price + sampleTreatment.price;
+  
+  // Resposta personalizada baseada na persona
+  let response = '';
+  
+  if (personaData.role.includes('Optometrista')) {
+    response = `��� **${personaData.name} - ${personaData.role}**
+    
+Baseado na sua solicitação: "${message}"
 
-Baseado na sua solicitação: "${mensagem.substring(0, 50)}..."
+��� **ANÁLISE TÉCNICA:**
+• Tipo de lente recomendada: ${sampleLens.type} (${sampleLens.material})
+• Tratamento essencial: ${sampleTreatment.name} - ${sampleTreatment.description}
+• Compatibilidade com graus altos: ${sampleFrame.description.includes('graus altos') ? 'Sim ✅' : 'Verificar'}
 
-��� OPÇÕES DE ARMAÇÃO:
-• Linha Básica (Acetato): R$ 189,90 - R$ 289,90
-• Linha Premium (Metal/Titânio): R$ 349,90 - R$ 599,90
-• Linha Esportiva (Flexível): R$ 279,90 - R$ 459,90
+��� **ORÇAMENTO DETALHADO:**
+1. Armação ${sampleFrame.name}: R$ ${sampleFrame.price.toFixed(2)}
+2. Lente ${sampleLens.type}: R$ ${sampleLens.price.toFixed(2)}
+3. Tratamento ${sampleTreatment.name}: R$ ${sampleTreatment.price.toFixed(2)}
+   ─────────────────────────────
+   **TOTAL: R$ ${totalPrice.toFixed(2)}**
 
-��� TIPOS DE LENTE:
-• Single Vision (Grau simples): R$ 149,90
-• Bifocal/Multifocal: R$ 299,90 - R$ 499,90
-• + Tratamento Anti-Reflexo: R$ 89,90
-• + Proteção Blue Light: R$ 119,90
-• + Fotossensível: R$ 199,90
+⏰ **PRAZO:** ${DELIVERY_TIMES[1].time}
+�� **CONDIÇÕES:** ${PAYMENT_METHODS[0].method} com ${PAYMENT_METHODS[0].discount} off
 
-⏱️ PRAZO DE ENTREGA: 7 a 14 dias úteis
-��� FRETE GRÁTIS para toda a região
+��� **RECOMENDAÇÃO TÉCNICA:**
+${sampleLens.description}. ${sampleTreatment.description}
 
-�� FORMAS DE PAGAMENTO:
-• À vista (10% desconto)
-• Parcelado em até 10x sem juros
-• PIX (5% desconto)
+��� **Próximo passo:** Agende uma consulta para medições precisas.`;
+  
+  } else if (personaData.role.includes('Visagismo')) {
+    response = `��� **${personaData.name} - ${personaData.role}**
+    
+Analisando sua busca: "${message}"
 
-��� Para um orçamento preciso com suas medidas exatas, visite nossa loja ou agende uma consulta pelo WhatsApp!
+✨ **ANÁLISE DE ESTILO:**
+• Formato sugerido: ${sampleFrame.shape}
+• Cor que realça: ${sampleFrame.frameColor}
+• Material ideal: ${sampleFrame.material}
 
-*Este é um orçamento estimado. Valores podem variar conforme especificações técnicas.*`;
+��� **SUGESTÕES DE ARMAÇÃO:**
+1. **${sampleFrame.name}** - ${sampleFrame.description}
+   → Cor: ${sampleFrame.frameColor} | Peso: ${sampleFrame.weight}
+   → Preço: R$ ${sampleFrame.price.toFixed(2)}
+
+2. **${FRAMES[1].name}** - ${FRAMES[1].description}
+   → Cor: ${FRAMES[1].frameColor} | Estilo: ${FRAMES[1].shape}
+   → Preço: R$ ${FRAMES[1].price.toFixed(2)}
+
+��� **DICAS DE VISAGISMO:**
+• Armação ${sampleFrame.shape} harmoniza com vários formatos de rosto
+• Cor ${sampleFrame.frameColor} é versátil para uso diário
+• ${sampleFrame.material} oferece durabilidade e conforto
+
+��� **INVESTIMENTO:**
+Armação + lente básica: a partir de R$ ${(sampleFrame.price + LENSES[0].price).toFixed(2)}
+
+��� **Agende uma consulta de visagismo para análise personalizada!**`;
+  
+  } else {
+    // Consultora Comercial
+    response = `��� **${personaData.name} - ${personaData.role}**
+    
+Entendi sua necessidade: "${message}"
+
+��� **MELHOR CUSTO-BENEFÍCIO:**
+
+���️ **OPÇÃO ECONÔMICA:**
+• Armação: ${FRAMES[0].name} - R$ ${FRAMES[0].price.toFixed(2)}
+• Lente: ${LENSES[0].type} - R$ ${LENSES[0].price.toFixed(2)}
+• **Total: R$ ${(FRAMES[0].price + LENSES[0].price).toFixed(2)}**
+
+⭐ **OPÇÃO PREMIUM:**
+• Armação: ${sampleFrame.name} - R$ ${sampleFrame.price.toFixed(2)}
+• Lente: ${sampleLens.type} - R$ ${sampleLens.price.toFixed(2)}
+• Tratamento: ${sampleTreatment.name} - R$ ${sampleTreatment.price.toFixed(2)}
+• **Total: R$ ${totalPrice.toFixed(2)}**
+
+��� **PROMOÇÕES ATIVAIS:**
+• Combo completo: 15% de desconto
+• 2ª unidade: 30% off (óculos de sol)
+• PIX: 10% adicional
+
+⏰ **PRAZOS:**
+${DELIVERY_TIMES.map(d => `• ${d.type}: ${d.time}`).join('\n')}
+
+��� **FORMA DE PAGAMENTO:**
+${PAYMENT_METHODS.map(p => `• ${p.method}${p.discount ? ` (${p.discount})` : ''}${p.installments ? ` ${p.installments}` : ''}`).join('\n')}
+
+��� **Fale comigo para negociar condições especiais!**`;
+  }
+  
+  return response;
 };
+
+// ========== SISTEMA DE CACHE ==========
+
+const getCacheKey = (message, persona) => {
+  const normalizedMessage = message.toLowerCase().trim();
+  const key = `${persona}:${normalizedMessage.substring(0, 100)}`;
+  return key;
+};
+
+const checkCache = (key) => {
+  const cached = responseCache.get(key);
+  if (cached && (Date.now() - cached.timestamp < CACHE_DURATION)) {
+    console.log('��� Resposta recuperada do cache');
+    return cached.response;
+  }
+  return null;
+};
+
+const saveToCache = (key, response) => {
+  responseCache.set(key, {
+    response,
+    timestamp: Date.now()
+  });
+  // Limitar tamanho do cache
+  if (responseCache.size > 100) {
+    const firstKey = responseCache.keys().next().value;
+    responseCache.delete(firstKey);
+  }
+};
+
+// ========== ROTAS PRINCIPAIS ==========
 
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'online',
-    service: 'Ótica CDO - API de Orçamentos',
+    service: 'Ótica CDO - IA Avançada',
     timestamp: new Date().toISOString(),
-    geminiConfigured: !!process.env.GEMINI_API_KEY,
-    modoOperacao: process.env.GEMINI_API_KEY ? 'gemini_tentativa' : 'fallback_automatico'
+    features: {
+      gemini: !!ai,
+      cache: responseCache.size,
+      fallback: 'rich',
+      personas: PERSONAS.length,
+      products: FRAMES.length + LENSES.length
+    },
+    stats: {
+      cacheSize: responseCache.size,
+      cacheHits: Object.fromEntries(
+        Array.from(responseCache.entries()).slice(0, 3)
+      )
+    }
   });
 });
 
 app.post('/api/orcamento', async (req, res) => {
-  console.log('��� Recebendo pedido de orçamento:', req.body.mensagem?.substring(0, 50));
+  const startTime = Date.now();
+  const { mensagem, contexto, persona = 'Dra. Camila' } = req.body;
   
-  try {
-    const { mensagem, contexto } = req.body;
-    
-    if (!mensagem || typeof mensagem !== 'string') {
-      return res.status(400).json({ 
-        sucesso: false,
-        error: 'A mensagem é obrigatória' 
-      });
-    }
-
-    // Se não tem chave Gemini ou optou por não usar, vai direto para fallback
-    if (!process.env.GEMINI_API_KEY) {
-      console.log('⚠️  Sem chave Gemini - usando fallback');
-      const respostaFallback = gerarOrcamentoFallback(mensagem);
-      
-      return res.json({
-        sucesso: true,
-        resposta: respostaFallback,
-        metadata: {
-          modelo: 'fallback_simulado',
-          motivo: 'Chave Gemini não configurada',
-          timestamp: new Date().toISOString()
-        }
-      });
-    }
-
-    // TENTAR GEMINI PRIMEIRO
-    console.log('��� Tentando Gemini API...');
+  if (!mensagem) {
+    return res.status(400).json({ 
+      sucesso: false,
+      error: 'Mensagem é obrigatória' 
+    });
+  }
+  
+  console.log(`��� [${persona}] Consulta: "${mensagem.substring(0, 80)}..."`);
+  
+  // Verificar cache
+  const cacheKey = getCacheKey(mensagem, persona);
+  const cachedResponse = checkCache(cacheKey);
+  
+  if (cachedResponse) {
+    return res.json({
+      sucesso: true,
+      resposta: cachedResponse,
+      metadata: {
+        fonte: 'cache',
+        tempo: `${Date.now() - startTime}ms`,
+        persona,
+        cacheHit: true
+      }
+    });
+  }
+  
+  // Tentar Gemini se disponível
+  if (ai) {
     try {
+      console.log('��� Tentando Gemini API...');
+      
+      const prompt = `Você é ${persona}, ${PERSONAS.find(p => p.name === persona)?.role || 'consultora'} da Ótica CDO.
+
+CONTEXTO: ${contexto || 'Cliente solicitando orçamento'}
+
+PERGUNTA DO CLIENTE: "${mensagem}"
+
+BASE DE DADOS DA ÓTICA CDO:
+- Armações disponíveis: ${FRAMES.map(f => `${f.name} (R$ ${f.price})`).join(', ')}
+- Lentes: ${LENSES.map(l => `${l.type} por R$ ${l.price}`).join(', ')}
+- Tratamentos: ${TREATMENTS.map(t => `${t.name} +R$ ${t.price}`).join(', ')}
+- Formas de pagamento: ${PAYMENT_METHODS.map(p => p.method).join(', ')}
+- Prazos: ${DELIVERY_TIMES.map(d => `${d.type}: ${d.time}`).join(', ')}
+
+INSTRUÇÕES:
+1. Responda como ${persona} - use tom profissional mas acolhedor
+2. Forneça orçamento REALISTA baseado nos preços acima
+3. Inclua pelo menos 2 opções (econômica e premium)
+4. Seja específico com valores, prazos e condições
+5. Encerre com um call-to-action apropriado
+
+RESPONDA EM PORTUGUÊS BRASILEIRO:`;
+      
       const response = await ai.models.generateContent({
-        model: 'gemini-1.5-flash', // Modelo mais estável
+        model: 'gemini-1.5-flash',
         contents: [{ 
           role: 'user', 
-          parts: [{ 
-            text: `Você é consultor especializado da Ótica CDO. 
-            Contexto do cliente: ${contexto || 'Busca por óculos'}
-            Solicitação específica: "${mensagem}"
-            
-            Forneça um orçamento detalhado incluindo:
-            1. Opções de armação com faixas de preço
-            2. Tipos de lente e tratamentos
-            3. Prazos de entrega estimados
-            4. Formas de pagamento disponíveis
-            5. Recomendações personalizadas
-            
-            Formato: Seja claro, use tópicos e valores em R$.`
-          }] 
+          parts: [{ text: prompt }] 
         }],
         generationConfig: {
           temperature: 0.7,
-          maxOutputTokens: 1000,
+          maxOutputTokens: 1500,
         }
       });
-
+      
       const respostaGemini = response.text;
       console.log('✅ Gemini respondeu com sucesso');
+      
+      // Salvar no cache
+      saveToCache(cacheKey, respostaGemini);
       
       return res.json({
         sucesso: true,
         resposta: respostaGemini,
         metadata: {
-          modelo: 'gemini-1.5-flash',
           fonte: 'gemini_ai',
-          timestamp: new Date().toISOString()
+          tempo: `${Date.now() - startTime}ms`,
+          modelo: 'gemini-1.5-flash',
+          persona,
+          cacheSaved: true
         }
       });
       
-    } catch (erroGemini) {
-      console.warn('❌ Gemini falhou:', erroGemini.message);
+    } catch (error) {
+      console.warn('❌ Gemini falhou:', error.message);
       
-      // ERRO 429 (Quota) ou outros - usar fallback
-      if (erroGemini.message.includes('429') || erroGemini.message.includes('quota')) {
-        console.log('��� Cota excedida - usando fallback personalizado');
-        const respostaFallback = gerarOrcamentoFallback(mensagem);
-        
-        return res.json({
-          sucesso: true,
-          resposta: respostaFallback,
-          metadata: {
-            modelo: 'fallback_quota_excedida',
-            motivo: 'Cota Gemini excedida. ' + erroGemini.message.split('.')[0],
-            timestamp: new Date().toISOString()
-          }
-        });
+      // Se erro for 429 (quota) ou 403 (access), usar fallback rico
+      if (error.message.includes('429') || error.message.includes('quota') || 
+          error.message.includes('403') || error.message.includes('billing')) {
+        console.log('��� Usando fallback rico (quota excedida)');
+      } else {
+        console.log('⚠️  Erro na Gemini, usando fallback rico');
       }
-      
-      // Outros erros da Gemini
-      throw erroGemini;
     }
-
-  } catch (error) {
-    console.error('��� Erro no processamento:', error.message);
-    
-    // FALLBACK FINAL para qualquer erro não tratado
-    const respostaFinal = gerarOrcamentoFallback(req.body.mensagem || 'Erro desconhecido');
-    
-    return res.json({
-      sucesso: true,
-      resposta: respostaFinal,
-      metadata: {
-        modelo: 'fallback_erro_generico',
-        motivo: 'Erro: ' + error.message.substring(0, 100),
-        timestamp: new Date().toISOString()
-      }
-    });
   }
-});
-
-app.post('/api/teste', async (req, res) => {
-  try {
-    if (!process.env.GEMINI_API_KEY) {
-      return res.json({
-        status: 'FALLBACK_MODE',
-        mensagem: 'Chave Gemini não configurada. Sistema operando em modo fallback.',
-        timestamp: new Date().toISOString()
-      });
-    }
-    
-    // Teste simples com fallback
-    const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
-      contents: [{ 
-        role: 'user', 
-        parts: [{ text: 'Responda apenas "API OK"' }] 
-      }]
-    });
-    
-    res.json({ 
-      status: 'GEMINI_OK',
-      resposta: response.text,
-      modelo: 'gemini-1.5-flash'
-    });
-    
-  } catch (error) {
-    res.json({ 
-      status: 'GEMINI_OFFLINE',
-      mensagem: 'Gemini offline. Modo fallback ativo.',
-      erro: error.message.substring(0, 100)
-    });
-  }
-});
-
-// Nova rota para forçar modo fallback (útil para testes)
-app.post('/api/fallback-test', (req, res) => {
-  const { mensagem } = req.body;
-  const resposta = gerarOrcamentoFallback(mensagem || 'Teste de fallback');
+  
+  // Usar fallback rico
+  const fallbackResponse = generateRichFallback(mensagem, persona, 'default');
+  
+  // Salvar fallback no cache também
+  saveToCache(cacheKey, fallbackResponse);
   
   res.json({
     sucesso: true,
-    resposta: resposta,
+    resposta: fallbackResponse,
     metadata: {
-      fonte: 'fallback_forcado',
-      timestamp: new Date().toISOString()
+      fonte: 'fallback_rico',
+      tempo: `${Date.now() - startTime}ms`,
+      persona,
+      cacheSaved: true,
+      observacao: ai ? 'Gemini indisponível' : 'Modo apenas fallback'
     }
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`
-  ��� Backend Ótica CDO Iniciado!
-  ��� Porta: ${PORT}
-  ��� Status Gemini: ${process.env.GEMINI_API_KEY ? '✅ CONFIGURADA' : '⚠️  NÃO CONFIGURADA (Modo Fallback)'}
-  ��� Health Check: http://localhost:${PORT}/api/health
-  ��� Modo: ${process.env.GEMINI_API_KEY ? 'Tentará Gemini primeiro' : 'Apenas Fallback'}
-  
-  ⚠️  DICA: Se a Gemini falhar (erro 429), o sistema automaticamente
-       usará respostas simuladas. Seu site SEMPRE funcionará!
-  `);
+// ========== ROTAS ADICIONAIS ==========
+
+app.get('/api/produtos', (req, res) => {
+  res.json({
+    armações: FRAMES,
+    lentes: LENSES,
+    tratamentos: TREATMENTS,
+    totalProdutos: FRAMES.length + LENSES.length + TREATMENTS.length
+  });
 });
 
-// Rota inteligente para conversas contextuais
-app.post('/api/orcamento-inteligente', async (req, res) => {
-  console.log('��� Recebendo requisição inteligente');
-  
+app.get('/api/personas', (req, res) => {
+  res.json(PERSONAS);
+});
+
+app.get('/api/cache/status', (req, res) => {
+  res.json({
+    size: responseCache.size,
+    keys: Array.from(responseCache.keys()).slice(0, 10),
+    maxSize: 100,
+    duration: '5 minutos'
+  });
+});
+
+app.post('/api/cache/clear', (req, res) => {
+  const previousSize = responseCache.size;
+  responseCache.clear();
+  res.json({
+    sucesso: true,
+    mensagem: `Cache limpo (${previousSize} entradas removidas)`
+  });
+});
+
+app.post('/api/teste-completo', async (req, res) => {
   try {
-    const { mensagem, contexto, sessionId, estadoConversa } = req.body;
+    const testCases = [
+      { mensagem: 'Preciso de um óculos para miopia, com lente fina', persona: 'Dra. Camila' },
+      { mensagem: 'Quero um óculos de sol estiloso', persona: 'Eduardo' },
+      { mensagem: 'Qual o melhor custo-benefício para óculos de grau?', persona: 'Mariana' }
+    ];
     
-    if (!mensagem) {
-      return res.status(400).json({ 
-        sucesso: false,
-        error: 'Mensagem é obrigatória' 
+    const results = [];
+    
+    for (const testCase of testCases) {
+      const start = Date.now();
+      const cacheKey = getCacheKey(testCase.mensagem, testCase.persona);
+      const cached = checkCache(cacheKey);
+      
+      results.push({
+        caso: testCase.mensagem.substring(0, 40) + '...',
+        persona: testCase.persona,
+        cache: cached ? 'HIT' : 'MISS',
+        gemini: ai ? 'DISPONÍVEL' : 'INDISPONÍVEL'
       });
     }
-
-    // Se temos chave Gemini, usá-la de forma inteligente
-    if (process.env.GEMINI_API_KEY) {
-      try {
-        const response = await ai.models.generateContent({
-          model: 'gemini-1.5-flash',
-          contents: [{ 
-            role: 'user', 
-            parts: [{ 
-              text: contexto 
-            }] 
-          }],
-          generationConfig: {
-            temperature: 0.8, // Mais criativo para conversas
-            maxOutputTokens: 1200,
-            topP: 0.95
-          }
-        });
-
-        const respostaIA = response.text;
-        
-        // Tentar extrair informações estruturadas da resposta
-        const novasInformacoes = extrairInformacoes(respostaIA);
-        
-        console.log('✅ IA inteligente respondeu');
-        
-        return res.json({
-          sucesso: true,
-          resposta: respostaIA,
-          novasInformacoes: novasInformacoes,
-          metadata: {
-            modelo: 'gemini-1.5-flash',
-            sessionId: sessionId,
-            timestamp: new Date().toISOString()
-          }
-        });
-        
-      } catch (erroGemini) {
-        console.warn('❌ Gemini falhou, usando fallback inteligente:', erroGemini.message);
-        // Continue para o fallback
-      }
-    }
-
-    // Fallback inteligente (quando Gemini não disponível)
-    const respostaFallback = gerarRespostaInteligenteFallback(mensagem, estadoConversa);
     
-    return res.json({
-      sucesso: true,
-      resposta: respostaFallback,
-      metadata: {
-        modelo: 'fallback_inteligente',
-        sessionId: sessionId,
-        timestamp: new Date().toISOString()
-      }
+    res.json({
+      status: 'sistema_operacional',
+      testes: results,
+      cacheSize: responseCache.size,
+      gemini: !!ai,
+      timestamp: new Date().toISOString()
     });
-
+    
   } catch (error) {
-    console.error('��� Erro no processamento inteligente:', error);
-    
-    return res.json({
-      sucesso: true,
-      resposta: gerarRespostaInteligenteFallback(req.body.mensagem || 'Erro', {}),
-      metadata: {
-        modelo: 'fallback_erro',
-        timestamp: new Date().toISOString()
-      }
-    });
+    res.status(500).json({ error: error.message });
   }
 });
 
-// Função auxiliar para extrair informações da resposta da IA
-function extrairInformacoes(resposta) {
-  const informacoes = {};
+// ========== INICIALIZAÇÃO ==========
+
+app.listen(PORT, () => {
+  console.log(`
+  �� ÓTICA CDO - IA AVANÇADA
+  ==========================
+  ��� Porta: ${PORT}
+  ��� Gemini: ${ai ? '✅ CONECTADA' : '⚠️  SEM CHAVE'}
+  ��� Cache: Pronto (0 entradas)
+  ��� Personas: ${PERSONAS.length} configuradas
+  ��� Produtos: ${FRAMES.length} armações, ${LENSES.length} lentes
   
-  // Extrair tipo de receita
-  if (resposta.match(/miopia/i)) informacoes.prescriptionType = 'Miopia';
-  if (resposta.match(/hipermetropia/i)) informacoes.prescriptionType = 'Hipermetropia';
-  if (resposta.match(/astigmatismo/i)) informacoes.prescriptionType = 'Astigmatismo';
-  if (resposta.match(/presbiopia|vista cansada/i)) informacoes.prescriptionType = 'Presbiopia';
+  ��� Endpoints:
+  • Health: http://localhost:${PORT}/api/health
+  • Produtos: http://localhost:${PORT}/api/produtos
+  • Personas: http://localhost:${PORT}/api/personas
+  • Cache: http://localhost:${PORT}/api/cache/status
   
-  // Extrair orçamento
-  const budgetMatch = resposta.match(/R\$\s*(\d+[\.,]?\d*)/i);
-  if (budgetMatch) {
-    const valor = parseFloat(budgetMatch[1].replace(',', '.'));
-    if (valor < 300) informacoes.budgetRange = 'Econômico';
-    else if (valor < 600) informacoes.budgetRange = 'Médio';
-    else informacoes.budgetRange = 'Premium';
-  }
+  ⚡ Sistema: ${ai ? 'Gemini + Fallback' : 'Apenas Fallback'}
+  `);
   
-  return Object.keys(informacoes).length > 0 ? informacoes : null;
-}
-
-// Fallback inteligente
-function gerarRespostaInteligenteFallback(mensagem, estadoConversa) {
-  const mensagemLower = mensagem.toLowerCase();
-  const { collectedData = {}, currentStep = 'initial' } = estadoConversa;
+  // Pré-cache de perguntas frequentes
+  const frequentQuestions = [
+    { q: 'Quanto custa um óculos completo?', p: 'Mariana' },
+    { q: 'Preciso de lente para astigmatismo', p: 'Dra. Camila' },
+    { q: 'Qual armação combina com meu rosto?', p: 'Eduardo' }
+  ];
   
-  if (currentStep === 'initial') {
-    return `Olá! Sou a consultora virtual da Ótica CDO. ���
-
-Para criar um orçamento perfeito para você, vou fazer algumas perguntas:
-
-1. Você já usa óculos ou está procurando seu primeiro par?
-2. Sabe qual é o seu tipo de correção visual?
-3. Tem preferência por algum estilo?
-
-Me conta um pouco sobre o que você precisa!`;
-  }
+  frequentQuestions.forEach(({ q, p }) => {
+    const key = getCacheKey(q, p);
+    const response = generateRichFallback(q, p, 'precache');
+    saveToCache(key, response);
+  });
   
-  if (currentStep === 'collecting_info') {
-    if (!collectedData.prescriptionType) {
-      return "Entendi! Para escolher as lentes ideais, preciso saber: você tem miopia (dificuldade para ver de longe), hipermetropia (dificuldade para ver de perto), astigmatismo ou presbiopia (vista cansada)?";
-    }
-    
-    if (!collectedData.budgetRange) {
-      return `Perfeito! Agora sobre investimento: temos opções excelentes em diferentes faixas:
-
-• Econômica (R$ 189 - R$ 349): Armações básicas + lentes essenciais
-• Intermediária (R$ 350 - R$ 599): Mais conforto e design
-• Premium (R$ 600+): Materiais premium e tecnologia avançada
-
-Qual se encaixa melhor no seu planejamento?`;
-    }
-  }
-  
-  // Resposta genérica inteligente
-  return `Entendi sua necessidade! Com base no que você me contou, tenho algumas sugestões personalizadas:
-
-1. **Opção Versátil**: Armação "Classic Comfort" em acetato + lentes anti-reflexo - R$ 349,90
-2. **Opção Premium**: Armação "Titanium Light" + lentes blue control - R$ 589,90
-3. **Opção Econômica**: Armação "Essence" + lentes básicas - R$ 219,90
-
-Todas incluem: Garantia de 1 ano, limpeza grátis por 6 meses e ajustes vitalícios.
-
-Gostaria de detalhes sobre alguma dessas opções ou tem alguma preferência específica?`;
-}
+  console.log(`✅ ${frequentQuestions.length} perguntas frequentes pré-cacheadas`);
+});
