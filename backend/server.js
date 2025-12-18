@@ -235,3 +235,153 @@ app.listen(PORT, () => {
        usará respostas simuladas. Seu site SEMPRE funcionará!
   `);
 });
+
+// Rota inteligente para conversas contextuais
+app.post('/api/orcamento-inteligente', async (req, res) => {
+  console.log('��� Recebendo requisição inteligente');
+  
+  try {
+    const { mensagem, contexto, sessionId, estadoConversa } = req.body;
+    
+    if (!mensagem) {
+      return res.status(400).json({ 
+        sucesso: false,
+        error: 'Mensagem é obrigatória' 
+      });
+    }
+
+    // Se temos chave Gemini, usá-la de forma inteligente
+    if (process.env.GEMINI_API_KEY) {
+      try {
+        const response = await ai.models.generateContent({
+          model: 'gemini-1.5-flash',
+          contents: [{ 
+            role: 'user', 
+            parts: [{ 
+              text: contexto 
+            }] 
+          }],
+          generationConfig: {
+            temperature: 0.8, // Mais criativo para conversas
+            maxOutputTokens: 1200,
+            topP: 0.95
+          }
+        });
+
+        const respostaIA = response.text;
+        
+        // Tentar extrair informações estruturadas da resposta
+        const novasInformacoes = extrairInformacoes(respostaIA);
+        
+        console.log('✅ IA inteligente respondeu');
+        
+        return res.json({
+          sucesso: true,
+          resposta: respostaIA,
+          novasInformacoes: novasInformacoes,
+          metadata: {
+            modelo: 'gemini-1.5-flash',
+            sessionId: sessionId,
+            timestamp: new Date().toISOString()
+          }
+        });
+        
+      } catch (erroGemini) {
+        console.warn('❌ Gemini falhou, usando fallback inteligente:', erroGemini.message);
+        // Continue para o fallback
+      }
+    }
+
+    // Fallback inteligente (quando Gemini não disponível)
+    const respostaFallback = gerarRespostaInteligenteFallback(mensagem, estadoConversa);
+    
+    return res.json({
+      sucesso: true,
+      resposta: respostaFallback,
+      metadata: {
+        modelo: 'fallback_inteligente',
+        sessionId: sessionId,
+        timestamp: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    console.error('��� Erro no processamento inteligente:', error);
+    
+    return res.json({
+      sucesso: true,
+      resposta: gerarRespostaInteligenteFallback(req.body.mensagem || 'Erro', {}),
+      metadata: {
+        modelo: 'fallback_erro',
+        timestamp: new Date().toISOString()
+      }
+    });
+  }
+});
+
+// Função auxiliar para extrair informações da resposta da IA
+function extrairInformacoes(resposta) {
+  const informacoes = {};
+  
+  // Extrair tipo de receita
+  if (resposta.match(/miopia/i)) informacoes.prescriptionType = 'Miopia';
+  if (resposta.match(/hipermetropia/i)) informacoes.prescriptionType = 'Hipermetropia';
+  if (resposta.match(/astigmatismo/i)) informacoes.prescriptionType = 'Astigmatismo';
+  if (resposta.match(/presbiopia|vista cansada/i)) informacoes.prescriptionType = 'Presbiopia';
+  
+  // Extrair orçamento
+  const budgetMatch = resposta.match(/R\$\s*(\d+[\.,]?\d*)/i);
+  if (budgetMatch) {
+    const valor = parseFloat(budgetMatch[1].replace(',', '.'));
+    if (valor < 300) informacoes.budgetRange = 'Econômico';
+    else if (valor < 600) informacoes.budgetRange = 'Médio';
+    else informacoes.budgetRange = 'Premium';
+  }
+  
+  return Object.keys(informacoes).length > 0 ? informacoes : null;
+}
+
+// Fallback inteligente
+function gerarRespostaInteligenteFallback(mensagem, estadoConversa) {
+  const mensagemLower = mensagem.toLowerCase();
+  const { collectedData = {}, currentStep = 'initial' } = estadoConversa;
+  
+  if (currentStep === 'initial') {
+    return `Olá! Sou a consultora virtual da Ótica CDO. ���
+
+Para criar um orçamento perfeito para você, vou fazer algumas perguntas:
+
+1. Você já usa óculos ou está procurando seu primeiro par?
+2. Sabe qual é o seu tipo de correção visual?
+3. Tem preferência por algum estilo?
+
+Me conta um pouco sobre o que você precisa!`;
+  }
+  
+  if (currentStep === 'collecting_info') {
+    if (!collectedData.prescriptionType) {
+      return "Entendi! Para escolher as lentes ideais, preciso saber: você tem miopia (dificuldade para ver de longe), hipermetropia (dificuldade para ver de perto), astigmatismo ou presbiopia (vista cansada)?";
+    }
+    
+    if (!collectedData.budgetRange) {
+      return `Perfeito! Agora sobre investimento: temos opções excelentes em diferentes faixas:
+
+• Econômica (R$ 189 - R$ 349): Armações básicas + lentes essenciais
+• Intermediária (R$ 350 - R$ 599): Mais conforto e design
+• Premium (R$ 600+): Materiais premium e tecnologia avançada
+
+Qual se encaixa melhor no seu planejamento?`;
+    }
+  }
+  
+  // Resposta genérica inteligente
+  return `Entendi sua necessidade! Com base no que você me contou, tenho algumas sugestões personalizadas:
+
+1. **Opção Versátil**: Armação "Classic Comfort" em acetato + lentes anti-reflexo - R$ 349,90
+2. **Opção Premium**: Armação "Titanium Light" + lentes blue control - R$ 589,90
+3. **Opção Econômica**: Armação "Essence" + lentes básicas - R$ 219,90
+
+Todas incluem: Garantia de 1 ano, limpeza grátis por 6 meses e ajustes vitalícios.
+
+Gostaria de detalhes sobre alguma dessas opções ou tem alguma preferência específica?`;
+}
