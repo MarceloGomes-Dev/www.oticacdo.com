@@ -1,28 +1,25 @@
 import { Persona } from './types';
 
-const BACKEND_URL = 'https://seu-novo-backend.onrender.com'; // Ou seu Render
+// ‚ö†Ô∏è SUBSTITUA PELA URL DO SEU RENDER
+const BACKEND_URL = 'https://otica-cdo-ia-marcelo.onrender.com'; // OU sua URL
 
-// Sistema de hist√≥rico de conversa
+// Sistema de hist√≥rico
 let conversaHistorico: Array<{role: string, content: string}> = [];
 
 export const sendMessageToGemini = async (message: string, persona: Persona): Promise<string> => {
-  console.log(`Ì≤¨ [${persona.name}] Enviando: "${message.substring(0, 60)}..."`);
+  console.log(`Ì≤¨ [${persona.name}] Enviando para: ${BACKEND_URL}`);
   
-  // Adicionar mensagem do usu√°rio ao hist√≥rico
   conversaHistorico.push({ role: 'user', content: message });
   
   try {
     const response = await fetch(`${BACKEND_URL}/api/conversa`, {
       method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
         mensagem: message,
         persona: persona.name,
         contexto: persona.systemPrompt,
-        historico: conversaHistorico.slice(-5) // √öltimas 5 mensagens
+        historico: conversaHistorico.slice(-5)
       })
     });
 
@@ -30,11 +27,8 @@ export const sendMessageToGemini = async (message: string, persona: Persona): Pr
     
     const data = await response.json();
     
-    // Adicionar resposta da IA ao hist√≥rico
     if (data.sucesso && data.resposta) {
       conversaHistorico.push({ role: 'assistant', content: data.resposta });
-      
-      // Manter hist√≥rico limitado (√∫ltimas 10 trocas)
       if (conversaHistorico.length > 20) {
         conversaHistorico = conversaHistorico.slice(-20);
       }
@@ -45,43 +39,36 @@ export const sendMessageToGemini = async (message: string, persona: Persona): Pr
   } catch (error: any) {
     console.error(`Ì¥• [${persona.name}] Erro:`, error.message);
     
-    // Resposta de fallback com contexto
-    return `ÔøΩÔøΩ **${persona.name} - ${persona.role}**
+    return `Ì≤° **${persona.name} - ${persona.role}**
     
-Com base na nossa conversa sobre "${conversaHistorico.slice(-2).map(h => h.content.substring(0, 30)).join('...')}", recomendo:
-
-Ì≥û **Para uma an√°lise personalizada:**
-Agende uma consulta gratuita!
+Ì≥û **Para atendimento personalizado:**
 WhatsApp: (11) 99999-9999
+Telefone: (11) 3333-3333
 
-‚è∞ **Hor√°rio de atendimento:**
-Segunda a Sexta: 9h √†s 18h
-S√°bado: 9h √†s 13h
+‚è∞ **Hor√°rio:**
+Seg-Sex: 9h-18h
+S√°b: 9h-13h
 
-*Estou aqui para ajudar com todas suas d√∫vidas √≥ticas!*`;
+*Retornarei em instantes!*`;
   }
 };
 
-// Nova fun√ß√£o para conversa cont√≠nua
 export const getChatSession = () => ({ historico: conversaHistorico });
-
 export const resetChat = () => {
   conversaHistorico = [];
   console.log('Ì≤¨ Hist√≥rico reiniciado');
 };
 
-// Verificar status do sistema
 export const checkIAStatus = async () => {
   try {
     const response = await fetch(`${BACKEND_URL}/api/saude`);
     const data = await response.json();
-    
     return {
       status: data.status,
-      iaAtiva: data.apis_ativas?.deepseek || data.apis_ativas?.huggingface,
-      mensagem: data.apis_ativas?.deepseek ? '‚úÖ IA Profissional Ativa' : '‚ö†Ô∏è Modo Fallback (Configure API)'
+      iaAtiva: data.apis_ativas?.deepseek,
+      mensagem: data.apis_ativas?.deepseek ? '‚úÖ IA Profissional Ativa' : '‚ö†Ô∏è Configure API Key'
     };
   } catch {
-    return { status: 'offline', iaAtiva: false, mensagem: 'Backend n√£o respondendo' };
+    return { status: 'offline', iaAtiva: false };
   }
 };
