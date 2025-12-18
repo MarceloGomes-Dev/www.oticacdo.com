@@ -1,6 +1,6 @@
 import { Persona } from './types';
 
-const BACKEND_URL = 'http://localhost:3001'; // Ou seu Render
+const BACKEND_URL = 'https://seu-novo-backend.onrender.com'; // Ou seu Render
 
 // Sistema de histórico de conversa
 let conversaHistorico: Array<{role: string, content: string}> = [];
