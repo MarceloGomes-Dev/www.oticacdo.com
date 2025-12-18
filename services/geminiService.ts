@@ -1,7 +1,7 @@
 import { Persona } from './types';
 
 // ⚠️ SUBSTITUA PELA URL DO SEU RENDER
-const BACKEND_URL = 'https://otica-cdo-ia-marcelo.onrender.com'; // OU sua URL
+const BACKEND_URL = 'https://otica-cdo-backend-marcelo.onrender.com';
 
 // Sistema de histórico
 let conversaHistorico: Array<{role: string, content: string}> = [];
